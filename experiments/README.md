@@ -1,18 +1,11 @@
 # Guide
-## build
-in src dir:
-```
-make generic64/libXKCP.so
-```
-it generates `libHKCP.so` and headers in new dir `./bin/generic64`
-## Run sandbox example
-```
-cd experiments
+## Usage
+run `build.sh` to compile standalone compact version of sha-3 API.
+it generates `a.out`.
 
-g++ -I ../bin/generic64/libXKCP.so.headers/ sha-3.cpp -L../bin/generic64/ -lXKCP -Wl,-rpath,../bin/generic64/
-
-./a.out
-```
+## Structure
+`sha3algo.*` - standalone compact C version of sha-3 API.
+`sha3.cpp` - tests
 
 ## Commit format
 ```
