@@ -1,3 +1,5 @@
+#define SHA3_FUNC(hash_size, input, inputByteLen, output) FIPS202_SHA3_##hash_size(input, inputByteLen, output)
+
 /**
   *  Function to compute SHA3-224 on the input message. The output length is fixed to 28 bytes.
   */

@@ -15,21 +15,13 @@ namespace fileio {
 
 static_assert(SegSize % 4096 == 0);
 
-File::File(const char* filename, off_t segOffset) {  
-   
-    /*
-    } else if (prot == Access::WRITE) {
-        file_flags = O_CREAT|O_WRONLY|O_TRUNC;
-        mmap_flags = PROT_WRITE;
-    }
-    */
+File::File(const char* filename, const off_t segOffset) : m_fileFlags(O_RDONLY), m_mmapFlags(PROT_READ) {  
 
-    m_fd = open(filename, m_fileFlags);
+    m_fd = open(filename, m_fileFlags, S_IRUSR);
     if (m_fd < 0) {
         perror("open file error");
         exit(errno);
     }
-    // lseek(fd, offset, SEEK_SET) == -1
 
     struct stat statbuf;
     if (fstat(m_fd, &statbuf) < 0) {
@@ -47,8 +39,42 @@ File::File(const char* filename, off_t segOffset) {
 
     m_segSize = (m_segOffset + SegSize <= m_fileSize)? SegSize : m_fileSize - m_segOffset;
 
-    
-    
+    m_buf = mmap(NULL, m_segSize, m_mmapFlags, MAP_SHARED, m_fd, m_segOffset);
+    if (m_buf == MAP_FAILED) {
+        perror("map failure");
+        exit(errno);
+    }
+}
+
+File::File(const char* filename, const size_t size) : m_fileFlags(O_CREAT | O_RDWR | O_TRUNC), m_mmapFlags(PROT_READ | PROT_WRITE) {  
+
+    m_fd = open(filename, m_fileFlags, S_IWUSR | S_IRUSR);
+    if (m_fd < 0) {
+        perror("open file error");
+        exit(errno);
+    }
+
+    if (lseek(m_fd, size, SEEK_SET) == -1) {
+        perror("seek error");
+        exit(errno);
+    }
+    /*
+    printf("printf\n");
+    char abb[2] = "a";
+    write(m_fd, abb, 2);
+    */
+
+    struct stat statbuf;
+    if (fstat(m_fd, &statbuf) < 0) {
+        perror("fstat error");
+        exit(errno);
+    }
+
+    m_segOffset = 0;
+    m_fileSize = statbuf.st_size;
+
+    m_segSize = SegSize;
+
     m_buf = mmap(NULL, m_segSize, m_mmapFlags, MAP_SHARED, m_fd, m_segOffset);
     if (m_buf == MAP_FAILED) {
         perror("map failure");
@@ -80,7 +106,6 @@ void* File::nextSegment() {
 
     m_segOffset += SegSize;
     m_segSize = (m_segOffset + SegSize <= m_fileSize)? SegSize : m_fileSize - m_segOffset;
-
 
     m_buf = mmap(NULL, m_segSize, m_mmapFlags, MAP_SHARED, m_fd, m_segOffset);
     if (m_buf == MAP_FAILED) {
@@ -124,13 +149,18 @@ size_t File::getFileSize() const {
 size_t File::getSegSize() const {
     return m_segSize;
 }
-unsigned char File::operator[] (const size_t idx) {
+
+ReadOnly::ReadOnly(const char* filename, off_t segOffset) : File(filename, segOffset) {}
+
+ReadOnly::~ReadOnly() {}
+
+unsigned char ReadOnly::operator[] (const size_t idx) {
     assert(idx < SegSize);
     unsigned char* ptr = (unsigned char*)((uint64_t)m_buf + idx);
     return *ptr;
 }
 
-size_t File::copySegment(size_t size, off_t offset, void* ptr) const {
+size_t ReadOnly::copySegment(size_t size, off_t offset, void* ptr) const {
     if (size > m_segSize - offset) {
         ptr = nullptr;
         return 0;
@@ -141,6 +171,49 @@ size_t File::copySegment(size_t size, off_t offset, void* ptr) const {
     assert(ptr != nullptr);
     return size;
 }
+
+void* ReadOnly::getSegment() const {
+    return File::getSegment();
+}
+
+void* ReadOnly::prevSegment() {
+    return File::prevSegment();
+}
+
+void* ReadOnly::nextSegment() {
+    return File::nextSegment();
+}
+
+WriteOnly::WriteOnly(const char* filename, size_t size) : File(filename, size) {}
+WriteOnly::~WriteOnly() {}
+
+size_t WriteOnly::write(size_t size, void* ptr) {
+    const auto new_size = m_segOffset + size;
+    if (new_size > m_fileSize) {
+        auto seek_res = lseek(m_fd, new_size, SEEK_SET);
+        if (seek_res == -1) {
+            perror("seek error");
+            exit(errno);
+        }
+        assert(seek_res == new_size);
+        m_fileSize = seek_res;
+    }
+
+    size_t offset = 0;
+    auto* ptr_tmp = m_buf;
+    while(offset != size) {
+        assert(ptr_tmp == m_buf);
+        auto block = (size - offset < SegSize)? size - offset : SegSize;
+        memcpy(m_buf, (unsigned char*)ptr + offset, block);
+        offset += block;
+        if (block == SegSize) {
+            ptr_tmp = File::nextSegment();
+        }
+    }
+
+}
+
+
 
 
 
