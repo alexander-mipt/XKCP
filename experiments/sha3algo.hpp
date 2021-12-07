@@ -1,4 +1,10 @@
+#pragma once
+
 #define SHA3_FUNC(hash_size, input, inputByteLen, output) FIPS202_SHA3_##hash_size(input, inputByteLen, output)
+
+void print_hash(const unsigned hashBitlen, const unsigned char* input, const unsigned inputBytelen);
+
+void dump_hash(const unsigned bits_len, const unsigned char *hash);
 
 /**
   *  Function to compute SHA3-224 on the input message. The output length is fixed to 28 bytes.
