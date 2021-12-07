@@ -71,7 +71,7 @@ ssize_t len_without_newline(const char* buf, const size_t max_len) {
 int main() {
     unsigned char* hash0 = (unsigned char*)calloc(HASH_SIZE / 8, sizeof(unsigned char));
     unsigned char* hash = (unsigned char*)calloc(HASH_SIZE / 8, sizeof(unsigned char));
-    int hash_fd = open("hash_log.txt", O_WRONLY | O_APPEND | O_CREAT, 0644);
+    int hash_fd = open("hash_log.txt", O_WRONLY | O_TRUNC | O_CREAT, 0644);
 
     // read input as strings ended with newline
     fileio::ReadOnly f("avalanche_effect.txt", 0);
@@ -86,12 +86,7 @@ int main() {
     char* tmp = nullptr;
     size_t rest_len = 0;
 
-    size_t newlines = 0;
-
-
     while(ptr != nullptr) {
-        newlines++;
-        // printf("here\n");
         // loaded bytes from cur segment
         size_t loaded = 0;
         // printf("here\n");
@@ -105,45 +100,35 @@ int main() {
 
         char* input = nullptr;
         if (rest_len != 0) {
-            printf("!!!!!here?\n");
             char* input = (char*)calloc(len + rest_len + 1, sizeof(char));
             assert(input != nullptr);
             assert(tmp != nullptr);
-            // printf("?here?\n");
             assert(memcpy(input, tmp, rest_len) == input);
-            // printf("?here?\n");
             assert(memcpy(input + rest_len, (char*)ptr, len + 1) == input + rest_len);
-            printf("%u, %.*s",len + rest_len + 1, len + rest_len + 1, input);
-            // printf("?here?\n");
             free(tmp);
             tmp = nullptr;
             start = input;
-            printf("?here?\n");
         } else {
-            printf("?here__\n");
             start = ptr;
         }
 
         loaded += (len + 1);
-        printf("here??\n");
         if (seg_num == 0) {
             SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash0);
             //save_hash_result(hash_fd, (const unsigned char*)start, (int)(len + rest_len + 1), hash0, HASH_SIZE / 8);
             write(hash_fd, (unsigned char*)start, len + rest_len + 1);
         } else {
-            printf("here???\n");
             assert(start != nullptr);
             SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash);
-            // printf("here????\n");
             // do analysis
-            if (len == len0) {
+            if (len + rest_len == len0) {
                 calculate_bit_diff(hash, hash0);
+            } else {
+                printf("g new len: %u->%u\n", len0, len + rest_len);
             }
-            // printf("here???\n");
             // dump input & hash
             // save_hash_result(hash_fd, (const unsigned char*)start, (int)(len + rest_len + 1), hash, HASH_SIZE / 8);
             write(hash_fd, (unsigned char*)start, len + rest_len + 1);
-            printf("%u, %.*s",len + rest_len + 1, len + rest_len + 1, start);
             // dump avalanche stat
 
             // save prev result
@@ -152,17 +137,14 @@ int main() {
         
         
         // clear rest for new segment processing
-        ssize_t len0 = len + rest_len;
+        len0 = len + rest_len;
         rest_len = 0;
         start = ptr;
         if (input != nullptr) {
             free(input);
-        }   
-
-        printf("nl: %u\n", newlines);   
+        }  
         
         while (loaded < seg_size) {
-            // printf("here\n");
             start += (len + 1); 
             len = len_without_newline(start, seg_size - loaded); 
             
@@ -182,22 +164,19 @@ int main() {
             loaded += (len + 1);
 
             SHA3_FUNC(224, (const unsigned char*)start, (int)(len), hash);
-            newlines++;
             // do analysis
             if (len == len0) {
                 calculate_bit_diff(hash, hash0);
+            } else {
+                printf("new len: %u->%u\n", len0, len);
             }
             // dump input & hash
             // save_hash_result(hash_fd, (const unsigned char*)start, (int)(len + 1), hash, HASH_SIZE / 8);
             write(hash_fd, (unsigned char*)start, len + 1);
-            printf("%u, %.*s",len + 1, len + 1, start);
             // dump avalanche stat
             // save prev result
             memcpy(hash, hash0, HASH_SIZE / 8);
             len0 = len;
-
-            //assert(newlines < 479);
-            // printf("nl: %u\n", newlines);
         }
 
         // save rest of prev segment
@@ -205,14 +184,12 @@ int main() {
             tmp = (char*)calloc(rest_len, sizeof(char));
             assert(tmp != nullptr);
             assert(memcpy(tmp, start, rest_len) == tmp);
-            printf("rest: %d\n", rest_len);
         }
 
         // load next file segment
-        printf("next seg\n");
         ptr = (char*)f.nextSegment();
-        printf("next seg!\n");
         seg_num++;
+        printf("loaded seg: %u\n", seg_num);
     }
 
     dump_test_results();
