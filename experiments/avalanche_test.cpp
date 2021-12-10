@@ -7,19 +7,22 @@
 #include <cstdint>
 
 
-#define HASH_SIZE 224
+//#define HASH_SIZE 224
 
-size_t g_bit_changes_total[HASH_SIZE] = {0};
+#define DELIMITED_SUFFIX 0x06
+#define KECCAK_f1600 1600
+
+size_t g_bit_changes_total[512] = {0};
 size_t g_changes_total = 0;
 size_t g_iterations_total = 0;
 
-size_t g_bit_changes_local[HASH_SIZE] = {0};
+size_t g_bit_changes_local[512] = {0};
 size_t g_changes_local = 0;
 size_t g_iterations_local = 0;
 
-void collect_bit_stat(const unsigned char* hash, const unsigned char* hash0) {
+void collect_bit_stat(const int hash_size, const unsigned char* hash, const unsigned char* hash0) {
     
-    for (int byte_idx = 0; byte_idx < HASH_SIZE / 8; ++byte_idx) {
+    for (int byte_idx = 0; byte_idx < hash_size / 8; ++byte_idx) {
         // calculate diff
         unsigned char byte = hash0[byte_idx] ^ hash[byte_idx];
         
@@ -37,16 +40,16 @@ void collect_bit_stat(const unsigned char* hash, const unsigned char* hash0) {
     g_iterations_total++;
 }
 
-int flush_bit_stat(int fd, size_t inLenBits, bool bit_stat) {
+int flush_bit_stat(int fd, size_t inLenBits, const int hash_size, bool bit_stat) {
     if (g_iterations_local == 0)
         return -1;
 
     if (fd >= 0) {
         // idx | iterations | changes per iter (av %) |
-        assert(dprintf(fd, "\n%6lu\t%6lu\t%6lu\t%8.3f\t|\t", g_iterations_total, inLenBits, g_iterations_local, 1. * g_changes_local / (g_iterations_local * HASH_SIZE)) > 0);
+        assert(dprintf(fd, "\n%6lu\t%6lu\t%6lu\t%8.3f\t|\t", g_iterations_total, inLenBits, g_iterations_local, 1. * g_changes_local / (g_iterations_local * hash_size)) > 0);
     }
     
-    for (int bit_idx = 0; bit_idx < HASH_SIZE; ++ bit_idx) {
+    for (int bit_idx = 0; bit_idx < hash_size; ++ bit_idx) {
         
         if (fd >= 0 && bit_stat) {
             // bit changes (av %) | ... |
@@ -67,11 +70,11 @@ int flush_bit_stat(int fd, size_t inLenBits, bool bit_stat) {
     return 0;
 }
 
-int dump_global_stat(int fd, bool bit_stat) {
+int dump_global_stat(int fd, const int hash_size, bool bit_stat) {
     assert(fd >= 0);
-    assert(dprintf(fd, "\n%6lu\t%6s\t%6lu\t%8.3f\t|\t", g_iterations_total, "", g_iterations_total, 1. * g_changes_total / (g_iterations_total * HASH_SIZE)) > 0);
+    assert(dprintf(fd, "\n%6lu\t%6s\t%6lu\t%8.3f\t|\t", g_iterations_total, "", g_iterations_total, 1. * g_changes_total / (g_iterations_total * hash_size)) > 0);
     
-    for (int bit_idx = 0; bit_stat && bit_idx < HASH_SIZE; ++ bit_idx) {
+    for (int bit_idx = 0; bit_stat && bit_idx < hash_size; ++ bit_idx) {
         // bit changes (av %) | ... |
         assert(dprintf(fd, "%8.3f ", 1. * g_bit_changes_total[bit_idx] / g_iterations_total) > 0); 
     }
@@ -79,9 +82,9 @@ int dump_global_stat(int fd, bool bit_stat) {
     dprintf(fd, "\n");
 }
 
-int save_hash_result(int fd, const unsigned char* hash) {
+int save_hash_result(int fd, const int hash_size, const unsigned char* hash) {
     assert(hash != nullptr);
-    for (off_t i = 0; i < HASH_SIZE / 8; ++i) {
+    for (off_t i = 0; i < hash_size / 8; ++i) {
         assert(dprintf(fd, "%02x", hash[i]) > 0);
     }
     dprintf(fd, "\n");
@@ -95,15 +98,43 @@ ssize_t len_without_newline(const char* buf, const size_t max_len) {
     return newline - buf;
 }
 
-int main() {
-    unsigned char* hash0 = (unsigned char*)calloc(HASH_SIZE / 8, sizeof(unsigned char));
-    unsigned char* hash = (unsigned char*)calloc(HASH_SIZE / 8, sizeof(unsigned char));
+int main(int argc, char** argv) {
+    const char* message = \
+        "Avalanche test\n" \
+        "\tArgs: <hash_size> <num_rounds> <LSFR_state>\n" \
+        "\tif LSFR_state < 0 then exclude l-permutation\n";
+
+    printf("%s\n", message);
+
+    if (argc != 4) {
+        perror("wrong args");
+        return -1;
+    }
+    const uint8_t hash_size = atoi(argv[1]);
+    assert(hash_size == 224 || hash_size == 256 || hash_size == 384 || hash_size == 512);
+    const uint8_t num_rounds = atoi(argv[2]);
+    assert(num_rounds <= 24);
+    const long LSFR_state = atol(argv[3]);
+    bool LSFR = true;
+    if (LSFR_state < 0) {
+        LSFR = false;
+    }
+
+    internal_t params;
+    params.LFSR = LSFR;
+    params.LSFR_state = LSFR_state;
+    params.num_rounds = num_rounds;
+
+    dprintf(STDOUT_FILENO, "hash_size: %u rounds: %d LSFR[%d] %d\n", hash_size, num_rounds, LSFR, LSFR_state);
+
+    unsigned char* hash0 = (unsigned char*)calloc(hash_size / 8, sizeof(unsigned char));
+    unsigned char* hash = (unsigned char*)calloc(hash_size / 8, sizeof(unsigned char));
     
     // hash log file
     int hash_fd = open("output_hash.log", O_WRONLY | O_TRUNC | O_CREAT, 0644);
     // avalanche effect stat file
     int stat_fd = open("avalanche_stat.log", O_WRONLY | O_TRUNC | O_CREAT, 0644);
-    dprintf(stat_fd, "%6s\t%6s\t%6s\t%6s\t|\t%16s (%u bits)", "Idx", "InLenBits", "Itrs", "Mod", "ModPerBit", HASH_SIZE);
+    dprintf(stat_fd, "%6s\t%6s\t%6s\t%6s\t|\t%16s (%u bits)", "Idx", "InLenBits", "Itrs", "Mod", "ModPerBit", hash_size);
 
     // read input as strings ended with newline
     fileio::ReadOnly f("avalanche_effect.txt", 0);
@@ -146,26 +177,28 @@ int main() {
         loaded += (len + 1);
         if (seg_num == 0) {
             // get hash
-            SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash0);
+            //SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash0);
+            Keccak_Dev(KECCAK_f1600 - hash_size * 2, hash_size * 2, (const unsigned char*)start, (int)(len + rest_len), DELIMITED_SUFFIX, hash0, hash_size / 8, &params);
             // write(hash_fd, (unsigned char*)start, len + rest_len + 1);
-            save_hash_result(hash_fd, hash0);
+            save_hash_result(hash_fd, hash_size, hash0);
         } else {
             assert(start != nullptr);
             // get hash
-            SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash);
+            //SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash);
+            Keccak_Dev(KECCAK_f1600 - hash_size * 2, hash_size * 2, (const unsigned char*)start, (int)(len + rest_len), DELIMITED_SUFFIX, hash, hash_size / 8, &params);
             // write(hash_fd, (unsigned char*)start, len + rest_len + 1);
-            save_hash_result(hash_fd, hash);
+            save_hash_result(hash_fd, hash_size, hash);
             
             // calculate avalanche stat
             if (len + rest_len == len0) {
-                collect_bit_stat(hash, hash0);
-                flush_bit_stat(stat_fd, len0, false);
+                collect_bit_stat(hash_size, hash, hash0);
+                flush_bit_stat(stat_fd, len0, hash_size, false);
             }
             
             // dump avalanche stat
 
             // save prev result
-            memcpy(hash0, hash, HASH_SIZE / 8);
+            memcpy(hash0, hash, hash_size / 8);
         }
         
         // clear rest for new segment processing
@@ -188,17 +221,18 @@ int main() {
             
             loaded += (len + 1);
 
-            SHA3_FUNC(224, (const unsigned char*)start, (int)(len), hash);
+            //SHA3_FUNC(224, (const unsigned char*)start, (int)(len), hash);
+            Keccak_Dev(KECCAK_f1600 - hash_size * 2, hash_size * 2, (const unsigned char*)start, (int)(len), DELIMITED_SUFFIX, hash, hash_size / 8, &params);
             // write(hash_fd, (unsigned char*)start, len + 1);
-            save_hash_result(hash_fd, hash);
+            save_hash_result(hash_fd, hash_size, hash);
             // do analysis
             if (len == len0) {
-                collect_bit_stat(hash, hash0);
-                flush_bit_stat(stat_fd, len0, false);
+                collect_bit_stat(hash_size, hash, hash0);
+                flush_bit_stat(stat_fd, len0, hash_size, false);
             }
 
             // save prev result
-            memcpy(hash, hash0, HASH_SIZE / 8);
+            memcpy(hash, hash0, hash_size / 8);
             len0 = len;
         }
 
@@ -215,8 +249,8 @@ int main() {
         printf("loaded seg: %u\n", seg_num);
     }
 
-    dump_global_stat(stat_fd, true);
-    dump_global_stat(STDOUT_FILENO, false);
+    dump_global_stat(stat_fd, hash_size, true);
+    dump_global_stat(STDOUT_FILENO, hash_size, false);
 /*
     printf("\n\n\n");
     print_hash(224, (const unsigned char*)"sasha", 0);
