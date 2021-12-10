@@ -46,14 +46,14 @@ int flush_bit_stat(int fd, size_t inLenBits, const int hash_size, bool bit_stat)
 
     if (fd >= 0) {
         // idx | iterations | changes per iter (av %) |
-        assert(dprintf(fd, "\n%6lu\t%6lu\t%6lu\t%8.3f\t|\t", g_iterations_total, inLenBits, g_iterations_local, 1. * g_changes_local / (g_iterations_local * hash_size)) > 0);
+        assert(dprintf(fd, "\n%6lu\t%6lu\t%6lu\t%8.4f\t|\t", g_iterations_total, inLenBits, g_iterations_local, 1. * g_changes_local / (g_iterations_local * hash_size)) > 0);
     }
     
     for (int bit_idx = 0; bit_idx < hash_size; ++ bit_idx) {
         
         if (fd >= 0 && bit_stat) {
             // bit changes (av %) | ... |
-           assert(dprintf(fd, "%8.3f ", 1. * g_bit_changes_local[bit_idx] / g_iterations_local) > 0); 
+           assert(dprintf(fd, "%8.4f ", 1. * g_bit_changes_local[bit_idx] / g_iterations_local) > 0); 
         }
         
 
@@ -72,11 +72,11 @@ int flush_bit_stat(int fd, size_t inLenBits, const int hash_size, bool bit_stat)
 
 int dump_global_stat(int fd, const int hash_size, bool bit_stat) {
     assert(fd >= 0);
-    assert(dprintf(fd, "\n%6lu\t%6s\t%6lu\t%8.3f\t|\t", g_iterations_total, "", g_iterations_total, 1. * g_changes_total / (g_iterations_total * hash_size)) > 0);
+    assert(dprintf(fd, "\n%6lu\t%6s\t%6lu\t%8.4f\t|\t", g_iterations_total, "", g_iterations_total, 1. * g_changes_total / (g_iterations_total * hash_size)) > 0);
     
     for (int bit_idx = 0; bit_stat && bit_idx < hash_size; ++ bit_idx) {
         // bit changes (av %) | ... |
-        assert(dprintf(fd, "%8.3f ", 1. * g_bit_changes_total[bit_idx] / g_iterations_total) > 0); 
+        assert(dprintf(fd, "%8.4f ", 1. * g_bit_changes_total[bit_idx] / g_iterations_total) > 0); 
     }
     
     dprintf(fd, "\n");
@@ -110,7 +110,7 @@ int main(int argc, char** argv) {
         perror("wrong args");
         return -1;
     }
-    const uint8_t hash_size = atoi(argv[1]);
+    const unsigned hash_size = atoi(argv[1]);
     assert(hash_size == 224 || hash_size == 256 || hash_size == 384 || hash_size == 512);
     const uint8_t num_rounds = atoi(argv[2]);
     assert(num_rounds <= 24);
@@ -246,7 +246,7 @@ int main(int argc, char** argv) {
         // load next file segment
         ptr = (char*)f.nextSegment();
         seg_num++;
-        printf("loaded seg: %u\n", seg_num);
+        // printf("loaded seg: %u\n", seg_num);
     }
 
     dump_global_stat(stat_fd, hash_size, true);
