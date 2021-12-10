@@ -4,15 +4,20 @@
 #include <cstring>
 #include "fileio.hpp"
 #include <unistd.h>
+#include <cstdint>
 
 
 #define HASH_SIZE 224
 
-unsigned int g_bit_changes[HASH_SIZE] = {0};
-unsigned int g_iterations = 0;
-unsigned int g_changes_total = 0;
+size_t g_bit_changes_total[HASH_SIZE] = {0};
+size_t g_changes_total = 0;
+size_t g_iterations_total = 0;
 
-void calculate_bit_diff(const unsigned char* hash, const unsigned char* hash0) {
+size_t g_bit_changes_local[HASH_SIZE] = {0};
+size_t g_changes_local = 0;
+size_t g_iterations_local = 0;
+
+void collect_bit_stat(const unsigned char* hash, const unsigned char* hash0) {
     
     for (int byte_idx = 0; byte_idx < HASH_SIZE / 8; ++byte_idx) {
         // calculate diff
@@ -23,41 +28,63 @@ void calculate_bit_diff(const unsigned char* hash, const unsigned char* hash0) {
            
             // register diff           
             if (bit == 1) {
-                g_bit_changes[byte_idx * 8 + bit_idx]++;
-                g_changes_total++;
+                g_bit_changes_local[byte_idx * 8 + bit_idx]++;
+                g_changes_local++;
             }
         }
     }
-    g_iterations++;
+    g_iterations_local++;
+    g_iterations_total++;
 }
 
-int save_hash_result(int fd, const unsigned char* input, const size_t inByteLen, const unsigned char* hash, const size_t hashByteLen) {
-    ssize_t bytes = 0;
-    // printf("%.*s", inByteLen, input);
-    bytes = write(fd, input, inByteLen);
-    if (bytes != inByteLen) {
+int flush_bit_stat(int fd, size_t inLenBits, bool bit_stat) {
+    if (g_iterations_local == 0)
         return -1;
+
+    if (fd >= 0) {
+        // idx | iterations | changes per iter (av %) |
+        assert(dprintf(fd, "\n%6lu\t%6lu\t%6lu\t%8.3f\t|\t", g_iterations_total, inLenBits, g_iterations_local, 1. * g_changes_local / (g_iterations_local * HASH_SIZE)) > 0);
     }
-    // printf("%.*s\n", hashByteLen, hash);
-    bytes = write(fd, hash, hashByteLen);
-    bytes += write(fd, "\n", 1);
-    if (bytes != hashByteLen + 1) {
-        return -1;
+    
+    for (int bit_idx = 0; bit_idx < HASH_SIZE; ++ bit_idx) {
+        
+        if (fd >= 0 && bit_stat) {
+            // bit changes (av %) | ... |
+           assert(dprintf(fd, "%8.3f ", 1. * g_bit_changes_local[bit_idx] / g_iterations_local) > 0); 
+        }
+        
+
+        g_bit_changes_total[bit_idx] += g_bit_changes_local[bit_idx];
+        g_bit_changes_local[bit_idx] = 0;
     }
+    
+    g_changes_total += g_changes_local;
+    g_changes_local = 0;
+
+    g_iterations_local = 0;
+    // g_iterations_global is incremented in collect_bit_stat
+
     return 0;
 }
 
-
-
-void dump_test_results() {
-    printf("bit changes\n");
-    for (int i = HASH_SIZE - 1; i >= 0; --i) {
-        printf("%u ", g_bit_changes[i]);
+int dump_global_stat(int fd, bool bit_stat) {
+    assert(fd >= 0);
+    assert(dprintf(fd, "\n%6lu\t%6s\t%6lu\t%8.3f\t|\t", g_iterations_total, "", g_iterations_total, 1. * g_changes_total / (g_iterations_total * HASH_SIZE)) > 0);
+    
+    for (int bit_idx = 0; bit_stat && bit_idx < HASH_SIZE; ++ bit_idx) {
+        // bit changes (av %) | ... |
+        assert(dprintf(fd, "%8.3f ", 1. * g_bit_changes_total[bit_idx] / g_iterations_total) > 0); 
     }
-    printf("\n");
-    printf("average avalanche:\n");
-    printf("%f\n", 1. * g_changes_total / (g_iterations * HASH_SIZE));
-    printf("iterations total\n%u\n", g_iterations);
+    
+    dprintf(fd, "\n");
+}
+
+int save_hash_result(int fd, const unsigned char* hash) {
+    assert(hash != nullptr);
+    for (off_t i = 0; i < HASH_SIZE / 8; ++i) {
+        assert(dprintf(fd, "%02x", hash[i]) > 0);
+    }
+    dprintf(fd, "\n");
 }
 
 ssize_t len_without_newline(const char* buf, const size_t max_len) {
@@ -71,7 +98,12 @@ ssize_t len_without_newline(const char* buf, const size_t max_len) {
 int main() {
     unsigned char* hash0 = (unsigned char*)calloc(HASH_SIZE / 8, sizeof(unsigned char));
     unsigned char* hash = (unsigned char*)calloc(HASH_SIZE / 8, sizeof(unsigned char));
-    int hash_fd = open("hash_log.txt", O_WRONLY | O_TRUNC | O_CREAT, 0644);
+    
+    // hash log file
+    int hash_fd = open("output_hash.log", O_WRONLY | O_TRUNC | O_CREAT, 0644);
+    // avalanche effect stat file
+    int stat_fd = open("avalanche_stat.log", O_WRONLY | O_TRUNC | O_CREAT, 0644);
+    dprintf(stat_fd, "%6s\t%6s\t%6s\t%6s\t|\t%16s (%u bits)", "Idx", "InLenBits", "Itrs", "Mod", "ModPerBit", HASH_SIZE);
 
     // read input as strings ended with newline
     fileio::ReadOnly f("avalanche_effect.txt", 0);
@@ -89,10 +121,9 @@ int main() {
     while(ptr != nullptr) {
         // loaded bytes from cur segment
         size_t loaded = 0;
-        // printf("here\n");
         // compute 1st string (or tail of string from prev segment)
         ssize_t len = len_without_newline((char*)ptr, seg_size);
-        // printf("here\n");
+
         if (len == -1) {
             printf("error: string without newline\n");
             exit(-1);
@@ -114,27 +145,28 @@ int main() {
 
         loaded += (len + 1);
         if (seg_num == 0) {
+            // get hash
             SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash0);
-            //save_hash_result(hash_fd, (const unsigned char*)start, (int)(len + rest_len + 1), hash0, HASH_SIZE / 8);
-            write(hash_fd, (unsigned char*)start, len + rest_len + 1);
+            // write(hash_fd, (unsigned char*)start, len + rest_len + 1);
+            save_hash_result(hash_fd, hash0);
         } else {
             assert(start != nullptr);
+            // get hash
             SHA3_FUNC(224, (const unsigned char*)start, (int)(len + rest_len), hash);
-            // do analysis
+            // write(hash_fd, (unsigned char*)start, len + rest_len + 1);
+            save_hash_result(hash_fd, hash);
+            
+            // calculate avalanche stat
             if (len + rest_len == len0) {
-                calculate_bit_diff(hash, hash0);
-            } else {
-                printf("g new len: %u->%u\n", len0, len + rest_len);
+                collect_bit_stat(hash, hash0);
+                flush_bit_stat(stat_fd, len0, false);
             }
-            // dump input & hash
-            // save_hash_result(hash_fd, (const unsigned char*)start, (int)(len + rest_len + 1), hash, HASH_SIZE / 8);
-            write(hash_fd, (unsigned char*)start, len + rest_len + 1);
+            
             // dump avalanche stat
 
             // save prev result
             memcpy(hash0, hash, HASH_SIZE / 8);
         }
-        
         
         // clear rest for new segment processing
         len0 = len + rest_len;
@@ -154,26 +186,17 @@ int main() {
                 continue;
             }
             
-            
-            // snprintf("len: %ld\t%s", len, start);
-            // printf("len: %ld\t%.*s\n", len, (int)len, start);
-            // print_hash(224, (const unsigned char*)start, len);
-            
-            //dump_hash(224, hash_224);
-            
             loaded += (len + 1);
 
             SHA3_FUNC(224, (const unsigned char*)start, (int)(len), hash);
+            // write(hash_fd, (unsigned char*)start, len + 1);
+            save_hash_result(hash_fd, hash);
             // do analysis
             if (len == len0) {
-                calculate_bit_diff(hash, hash0);
-            } else {
-                printf("new len: %u->%u\n", len0, len);
+                collect_bit_stat(hash, hash0);
+                flush_bit_stat(stat_fd, len0, false);
             }
-            // dump input & hash
-            // save_hash_result(hash_fd, (const unsigned char*)start, (int)(len + 1), hash, HASH_SIZE / 8);
-            write(hash_fd, (unsigned char*)start, len + 1);
-            // dump avalanche stat
+
             // save prev result
             memcpy(hash, hash0, HASH_SIZE / 8);
             len0 = len;
@@ -192,8 +215,9 @@ int main() {
         printf("loaded seg: %u\n", seg_num);
     }
 
-    dump_test_results();
-
+    dump_global_stat(stat_fd, true);
+    dump_global_stat(STDOUT_FILENO, false);
+/*
     printf("\n\n\n");
     print_hash(224, (const unsigned char*)"sasha", 0);
     print_hash(224, (const unsigned char*)"savsha", 0);
@@ -205,5 +229,5 @@ int main() {
     print_hash(224, (const unsigned char*)"\0", 1);
     unsigned char zero = '\0';
     print_hash(224, &zero, 1);
-
+*/
 }
