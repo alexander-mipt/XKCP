@@ -6,6 +6,13 @@
 #include <cassert>
 #include <unistd.h>
 
+// init params as in FIPS202 srandart
+void init_internals(internal_t *s) {
+  s->LSFR_state = 0x01;
+  s->LFSR = true;
+  s->num_rounds = 24;
+}
+
 void parse_help(int argc, char* argv[], const char* message) {
     for (int i = 0; i < argc; ++i) {
         const char* help = argv[i];
@@ -42,10 +49,32 @@ int main(int argc, char** argv) {
     unsigned char* output = (unsigned char*)calloc(hash_size >> 3, sizeof(char));
     assert(output != NULL);
 
-    Keccak(1600 - (hash_size << 1), (hash_size << 1), (const unsigned char*)input, inputByteLen, 0x06, output, hash_size >> 3);
-    // FIPS202_SHA3_224((const unsigned char*)input, inputByteLen, output);
-
+    /* Calculate dev SHA3-XXX */
+    dprintf(STDOUT_FILENO, "dev sha-%d\n", hash_size);
+    internal_t params;
+    init_internals(&params);
+    Keccak_Dev(1600 - (hash_size << 1), (hash_size << 1), (const unsigned char*)input, inputByteLen, 0x06, output, hash_size >> 3, &params);
     for (int i = 0; i < hash_size >> 3; ++i) {
+        dprintf(STDOUT_FILENO, "%02x", output[i]);
+    }
+    dprintf(STDOUT_FILENO, "\n");
+    memset(output, 0x0, hash_size / 8);
+
+     /* Calculate standart FIPS202 SHA3-XXX */
+    dprintf(STDOUT_FILENO, "fips202 sha-%d\n", hash_size);
+    Keccak(1600 - (hash_size << 1), (hash_size << 1), (const unsigned char*)input, inputByteLen, 0x06, output, hash_size >> 3);
+    for (int i = 0; i < hash_size >> 3; ++i) {
+        dprintf(STDOUT_FILENO, "%02x", output[i]);
+    }
+    dprintf(STDOUT_FILENO, "\n");
+    memset(output, 0x0, hash_size / 8);
+
+    
+    /* Calculate FIPS202 SHA3-224 */
+    dprintf(STDOUT_FILENO, "fips202 sha-224\n");
+    FIPS202_SHA3_224((const unsigned char*)input, inputByteLen, output);
+
+    for (int i = 0; i < 224 >> 3; ++i) {
         dprintf(STDOUT_FILENO, "%02x", output[i]);
     }
     dprintf(STDOUT_FILENO, "\n");
