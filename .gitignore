@@ -1,2 +1,4 @@
 bin/
 var/
+experiments/unit_test/test_result.txt
+*.vscode/
