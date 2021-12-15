@@ -45,15 +45,15 @@ int flush_bit_stat(int fd, size_t inLenBits, const int hash_size, bool bit_stat)
         return -1;
 
     if (fd >= 0) {
-        // idx | iterations | changes per iter (av %) |
-        assert(dprintf(fd, "\n%6lu\t%6lu\t%6lu\t%8.4f\t|\t", g_iterations_total, inLenBits, g_iterations_local, 1. * g_changes_local / (g_iterations_local * hash_size)) > 0);
+        // idx | inputLen | changes per iter (av %)
+        assert(dprintf(fd, "\n%3lu\t%8lu\t%8lu\t", g_iterations_total, inLenBits, g_changes_local) > 0);
     }
     
     for (int bit_idx = 0; bit_idx < hash_size; ++ bit_idx) {
         
         if (fd >= 0 && bit_stat) {
             // bit changes (av %) | ... |
-           assert(dprintf(fd, "%8.4f ", 1. * g_bit_changes_local[bit_idx] / g_iterations_local) > 0); 
+           assert(dprintf(fd, "%6lu ", g_bit_changes_local[bit_idx]) > 0); 
         }
         
 
@@ -70,16 +70,18 @@ int flush_bit_stat(int fd, size_t inLenBits, const int hash_size, bool bit_stat)
     return 0;
 }
 
-int dump_global_stat(int fd, const int hash_size, bool bit_stat) {
+int dump_global_stat(int fd, const int hash_size, bool bit_stat, const int num_rounds) {
     assert(fd >= 0);
-    assert(dprintf(fd, "\n%6lu\t%6s\t%6lu\t%8.4f\t|\t", g_iterations_total, "", g_iterations_total, 1. * g_changes_total / (g_iterations_total * hash_size)) > 0);
+    dprintf(fd, "\ntotal(#)\taverage(%%)\tbit_stat(%%)\n");
+    dprintf(fd, "%8lu\t%8.3f\t", g_iterations_total, 100. * g_changes_total / (g_iterations_total * hash_size));
     
     for (int bit_idx = 0; bit_stat && bit_idx < hash_size; ++ bit_idx) {
         // bit changes (av %) | ... |
-        assert(dprintf(fd, "%8.4f ", 1. * g_bit_changes_total[bit_idx] / g_iterations_total) > 0); 
+        dprintf(fd, "%8.3f ", 100. * g_bit_changes_total[bit_idx] / g_iterations_total); 
     }
     
     dprintf(fd, "\n");
+    dprintf(fd, "hash_len(bits)\trounds\n%8u\t%6u\n", hash_size, num_rounds);
 }
 
 int save_hash_result(int fd, const int hash_size, const unsigned char* hash) {
@@ -125,7 +127,7 @@ int main(int argc, char** argv) {
     params.LSFR_state = LSFR_state;
     params.num_rounds = num_rounds;
 
-    dprintf(STDOUT_FILENO, "hash_size: %u rounds: %d LSFR[%d] %d\n", hash_size, num_rounds, LSFR, LSFR_state);
+    dprintf(STDOUT_FILENO, "hash size: %u\trounds: %u\tLSFR[%u] %lu\n", hash_size, num_rounds, LSFR, LSFR_state);
 
     unsigned char* hash0 = (unsigned char*)calloc(hash_size / 8, sizeof(unsigned char));
     unsigned char* hash = (unsigned char*)calloc(hash_size / 8, sizeof(unsigned char));
@@ -134,7 +136,7 @@ int main(int argc, char** argv) {
     int hash_fd = open("output_hash.log", O_WRONLY | O_TRUNC | O_CREAT, 0644);
     // avalanche effect stat file
     int stat_fd = open("avalanche_stat.log", O_WRONLY | O_TRUNC | O_CREAT, 0644);
-    dprintf(stat_fd, "%6s\t%6s\t%6s\t%6s\t|\t%16s (%u bits)", "Idx", "InLenBits", "Itrs", "Mod", "ModPerBit", hash_size);
+    dprintf(stat_fd, "%3s\t%6s\t%6s\t%16s", "#", "InLen(bits)", "~bits", "~bits");
 
     // read input as strings ended with newline
     fileio::ReadOnly f("avalanche_effect.txt", 0);
@@ -249,8 +251,8 @@ int main(int argc, char** argv) {
         // printf("loaded seg: %u\n", seg_num);
     }
 
-    dump_global_stat(stat_fd, hash_size, true);
-    dump_global_stat(STDOUT_FILENO, hash_size, false);
+    dump_global_stat(stat_fd, hash_size, true, num_rounds);
+    dump_global_stat(STDOUT_FILENO, hash_size, false, num_rounds);
 /*
     printf("\n\n\n");
     print_hash(224, (const unsigned char*)"sasha", 0);
