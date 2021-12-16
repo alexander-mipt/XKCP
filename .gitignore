@@ -2,3 +2,12 @@ bin/
 var/
 experiments/unit_test/test_result.txt
 *.vscode/
+experiments/randomness_test/data/
+experiments/randomness_test/generate_input_for_nist/high.txt
+experiments/randomness_test/generate_input_for_nist/low.txt
+experiments/randomness_test/generate_input_for_nist/rand.txt
+experiments/randomness_test/generate_input_for_nist/sha3
+experiments/randomness_test/sts/__pycache__/
+experiments/randomness_test/sts/results/
+experiments/randomness_test/sts/result_statistics.csv
+experiments/randomness_test/sts/sts
